@@ -1,0 +1,39 @@
+# .gitignore for Python PKI Project
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual Environment
+venv/
+env/
+ENV/
+.venv/
+
+# Generated certificates and keys (sensitive!)
+certificates/*.pem
+certificates/*.key
+certificates/*.sig
+certificates/*.txt
+certificates/*.crt
+certificates/*.csr
+
+# Keep the certificates directory structure
+!certificates/.gitkeep
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
