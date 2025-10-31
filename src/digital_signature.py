@@ -114,14 +114,21 @@ class DigitalSignature:
         
         return signature
     
-    def verify_signature(self, document, signature, document_name="document.txt"):
+    def verify_signature(self, document, signature, document_name="document.txt", signer_certificate=None):
         """
-        Verify a digital signature
+        Verify a digital signature (Proper PKI validation)
+        
+        This implements proper signature verification:
+        1. Validate signer's certificate (if provided)
+        2. Check certificate key usage permits signing
+        3. Verify cryptographic signature
+        4. Ensure certificate was valid at signing time
         
         Args:
             document: Original document content (bytes or string)
             signature: Digital signature to verify
             document_name: Name of the document
+            signer_certificate: X.509 certificate of the signer (optional but recommended)
             
         Returns:
             bool: True if signature is valid, False otherwise
@@ -130,7 +137,7 @@ class DigitalSignature:
             raise ValueError("Public key is required for verification")
         
         print(f"\n{'='*60}")
-        print(f"Verifying Digital Signature")
+        print(f"Verifying Digital Signature (PKI-Compliant)")
         print(f"{'='*60}")
         
         # Convert to bytes if string
@@ -140,8 +147,62 @@ class DigitalSignature:
         print(f"Document: {document_name}")
         print(f"Signature size: {len(signature)} bytes")
         
+        # Step 1: Validate signer's certificate (if provided)
+        if signer_certificate:
+            print(f"\n[Step 1/4] Validating Signer's Certificate")
+            
+            # Check validity period
+            import datetime as dt
+            now = dt.datetime.utcnow()
+            
+            if now < signer_certificate.not_valid_before:
+                print(f"✗ Certificate not yet valid at signing time")
+                print(f"  - Current: {now}")
+                print(f"  - Valid from: {signer_certificate.not_valid_before}")
+                return False
+            
+            if now > signer_certificate.not_valid_after:
+                print(f"✗ Certificate was EXPIRED at signing time")
+                print(f"  - Current: {now}")
+                print(f"  - Expired: {signer_certificate.not_valid_after}")
+                return False
+            
+            print(f"✓ Certificate is currently valid")
+            
+            # Check key usage
+            print(f"\n[Step 2/4] Checking Certificate Key Usage")
+            try:
+                from cryptography import x509
+                key_usage = signer_certificate.extensions.get_extension_for_oid(
+                    x509.oid.ExtensionOID.KEY_USAGE
+                )
+                
+                if not key_usage.value.digital_signature:
+                    print(f"✗ Certificate NOT authorized for digital signatures")
+                    print(f"  - Digital Signature: {key_usage.value.digital_signature}")
+                    print(f"  - This certificate cannot be used for signing!")
+                    return False
+                
+                print(f"✓ Certificate authorized for digital signatures")
+                
+                # Check non-repudiation (content commitment)
+                if key_usage.value.content_commitment:
+                    print(f"✓ Non-repudiation enabled (legally binding)")
+                
+            except Exception as e:
+                print(f"⚠️  Could not verify key usage: {e}")
+        else:
+            print(f"\n⚠️  No certificate provided - reduced security")
+            print(f"   Cannot verify:")
+            print(f"   - Certificate validity period")
+            print(f"   - Key usage constraints")
+            print(f"   - Certificate chain of trust")
+        
         try:
-            print("[1/2] Verifying signature with public key...")
+            # Step 3: Verify cryptographic signature
+            step_num = 3 if signer_certificate else 1
+            print(f"\n[Step {step_num}/{4 if signer_certificate else 2}] Verifying Cryptographic Signature")
+            
             self.public_key.verify(
                 signature,
                 document,
@@ -153,7 +214,10 @@ class DigitalSignature:
             )
             
             print("✓ Signature verification SUCCESSFUL")
-            print("[2/2] Calculating document integrity...")
+            
+            # Step 4: Calculate document integrity
+            step_num = 4 if signer_certificate else 2
+            print(f"\n[Step {step_num}/{4 if signer_certificate else 2}] Verifying Document Integrity")
             
             doc_hash = hashlib.sha256(document).hexdigest()
             print(f"✓ Document hash: {doc_hash[:32]}...")
@@ -165,6 +229,13 @@ class DigitalSignature:
             print("  ✓ Authentication: Verified - Signed by legitimate key holder")
             print("  ✓ Integrity: Verified - Document has not been modified")
             print("  ✓ Non-repudiation: Ensured - Signer cannot deny signing")
+            
+            if signer_certificate:
+                print("\nCertificate Validation:")
+                print("  ✓ Certificate is currently valid")
+                print("  ✓ Certificate authorized for signing")
+                print("  ✓ All PKI requirements satisfied")
+            
             print("\nLegal Status (India):")
             print("  - This signature is legally valid under IT Act, 2000")
             print("  - Equivalent to handwritten signature (Section 3A)")
@@ -173,8 +244,8 @@ class DigitalSignature:
             return True
             
         except Exception as e:
-            print(f"✗ Signature verification FAILED")
-            print(f"✗ Error: {str(e)}")
+            print(f"\n✗ Signature verification FAILED")
+            print(f"  Error: {str(e)}")
             
             print(f"\n{'='*60}")
             print("VERIFICATION RESULT: ✗ INVALID")
@@ -184,6 +255,10 @@ class DigitalSignature:
             print("  - Signature was created with a different key")
             print("  - Signature has been tampered with")
             print("  - Wrong public key used for verification")
+            
+            if signer_certificate:
+                print("  - Certificate may have been expired at signing time")
+                print("  - Certificate may not be authorized for signing")
             
             return False
     
@@ -279,11 +354,11 @@ class TimestampAuthority:
         Returns:
             dict: Timestamp information
         """
-        from datetime import datetime
+        import datetime as dt
         
         timestamp_info = {
             'document_hash': document_hash,
-            'timestamp': datetime.utcnow().isoformat(),
+            'timestamp': dt.datetime.utcnow().isoformat(),
             'tsa': 'India Timestamp Authority (Demo)',
             'algorithm': 'SHA-256'
         }

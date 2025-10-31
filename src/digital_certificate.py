@@ -216,29 +216,113 @@ class CertificateChain:
     
     def validate_chain(self):
         """
-        Validate the certificate chain
+        Validate the certificate chain per RFC 5280
+        
+        Performs comprehensive chain validation:
+        1. Each certificate is within validity period
+        2. Each certificate signature is valid
+        3. Each issuer has CA=true in basic constraints
+        4. Path length constraints are satisfied
+        5. Each link in chain is properly connected
         
         Returns:
             bool: True if chain is valid
         """
-        print("\n[Validating Certificate Chain]")
+        print("\n[Validating Certificate Chain - RFC 5280 Compliant]")
         
         if len(self.certificates) < 2:
             print("✗ Chain too short (need at least root CA and one certificate)")
             return False
         
-        # Check if each certificate is signed by the previous one
+        now = datetime.datetime.utcnow()
+        
+        # Check each certificate in the chain
+        for i in range(len(self.certificates)):
+            cert = self.certificates[i]
+            
+            # Get certificate name for display
+            cn = None
+            for attr in cert.subject:
+                if attr.oid._name == "commonName":
+                    cn = attr.value
+                    break
+            
+            print(f"\n[Certificate {i}: {cn}]")
+            
+            # Step 1: Check validity period
+            if now < cert.not_valid_before:
+                print(f"✗ Certificate not yet valid")
+                print(f"  - Current: {now}")
+                print(f"  - Valid from: {cert.not_valid_before}")
+                return False
+            
+            if now > cert.not_valid_after:
+                print(f"✗ Certificate EXPIRED")
+                print(f"  - Current: {now}")
+                print(f"  - Expired: {cert.not_valid_after}")
+                return False
+            
+            print(f"✓ Validity: {cert.not_valid_before} to {cert.not_valid_after}")
+            
+            # Step 2: Check basic constraints for CA certificates
+            if i < len(self.certificates) - 1:  # Not the end-entity cert
+                try:
+                    basic_constraints = cert.extensions.get_extension_for_oid(
+                        x509.oid.ExtensionOID.BASIC_CONSTRAINTS
+                    )
+                    
+                    if not basic_constraints.value.ca:
+                        print(f"✗ Certificate {i} is not a CA but trying to sign certificates")
+                        return False
+                    
+                    print(f"✓ CA certificate: Authorized to sign certificates")
+                    
+                    # Check path length constraint
+                    if basic_constraints.value.path_length is not None:
+                        remaining = len(self.certificates) - i - 2
+                        if remaining > basic_constraints.value.path_length:
+                            print(f"✗ Path length constraint violated")
+                            print(f"  - Max path length: {basic_constraints.value.path_length}")
+                            print(f"  - Remaining path: {remaining}")
+                            return False
+                        print(f"✓ Path length constraint: {basic_constraints.value.path_length} (OK)")
+                    
+                except x509.ExtensionNotFound:
+                    print(f"✗ CA certificate missing basic constraints extension")
+                    return False
+        
+        # Step 3: Verify each certificate is signed by the previous one
+        print(f"\n[Verifying Certificate Signatures]")
+        from cryptography.hazmat.primitives.asymmetric import padding
+        
         for i in range(len(self.certificates) - 1):
             issuer_cert = self.certificates[i]
             subject_cert = self.certificates[i + 1]
             
-            # Verify issuer matches
+            # Verify issuer name matches
             if subject_cert.issuer != issuer_cert.subject:
                 print(f"✗ Chain break: Certificate {i+1} issuer doesn't match certificate {i} subject")
+                print(f"  - Cert {i+1} issuer: {subject_cert.issuer.rfc4514_string()}")
+                print(f"  - Cert {i} subject: {issuer_cert.subject.rfc4514_string()}")
                 return False
             
-            # In a real implementation, you would verify the signature here
-            print(f"✓ Certificate {i+1} → Certificate {i}: Valid link")
+            # Verify cryptographic signature
+            try:
+                issuer_cert.public_key().verify(
+                    subject_cert.signature,
+                    subject_cert.tbs_certificate_bytes,
+                    padding.PKCS1v15(),
+                    subject_cert.signature_hash_algorithm
+                )
+                print(f"✓ Certificate {i+1} → Certificate {i}: Valid signature")
+            except Exception as e:
+                print(f"✗ Certificate {i+1} → Certificate {i}: Invalid signature")
+                print(f"  - Error: {e}")
+                return False
         
-        print("✓ Certificate chain is valid")
+        print("\n✓ Certificate chain is VALID")
+        print("  - All certificates within validity period")
+        print("  - All signatures verified")
+        print("  - All constraints satisfied")
+        print("  - Chain of trust established")
         return True

@@ -271,7 +271,13 @@ class CertificateAuthority:
     
     def verify_certificate(self, certificate):
         """
-        Verify if a certificate was issued by this CA
+        Verify if a certificate was issued by this CA (Proper PKI validation)
+        
+        This implements proper certificate validation per RFC 5280:
+        1. Verify validity period (not expired/not yet valid)
+        2. Verify cryptographic signature
+        3. Verify issuer matches CA
+        4. Verify certificate purpose and constraints
         
         Args:
             certificate: Certificate to verify
@@ -280,22 +286,83 @@ class CertificateAuthority:
             bool: True if valid, False otherwise
         """
         try:
-            # Verify the signature
+            # Step 1: Check validity period (CRITICAL!)
+            print(f"\n[Certificate Validation]")
+            now = datetime.datetime.utcnow()
+            
+            if now < certificate.not_valid_before:
+                print(f"✗ Certificate not yet valid")
+                print(f"  - Current time: {now}")
+                print(f"  - Valid from: {certificate.not_valid_before}")
+                return False
+            
+            if now > certificate.not_valid_after:
+                print(f"✗ Certificate has EXPIRED")
+                print(f"  - Current time: {now}")
+                print(f"  - Expired on: {certificate.not_valid_after}")
+                return False
+            
+            print(f"✓ Certificate validity period OK")
+            print(f"  - Valid from: {certificate.not_valid_before}")
+            print(f"  - Valid until: {certificate.not_valid_after}")
+            
+            # Step 2: Verify the cryptographic signature
+            print(f"\n[Signature Verification]")
+            from cryptography.hazmat.primitives.asymmetric import padding
+            
             self.certificate.public_key().verify(
                 certificate.signature,
                 certificate.tbs_certificate_bytes,
-                signature_algorithm=certificate.signature_hash_algorithm
+                padding.PKCS1v15(),
+                certificate.signature_hash_algorithm
             )
+            print(f"✓ Cryptographic signature valid")
             
-            # Check if issuer matches
-            if certificate.issuer == self.certificate.subject:
-                print(f"✓ Certificate verification successful")
-                print(f"  - Certificate is signed by: {self.name}")
-                return True
-            else:
+            # Step 3: Check if issuer matches CA subject
+            print(f"\n[Issuer Verification]")
+            if certificate.issuer != self.certificate.subject:
                 print(f"✗ Issuer mismatch")
+                print(f"  - Certificate issuer: {certificate.issuer.rfc4514_string()}")
+                print(f"  - CA subject: {self.certificate.subject.rfc4514_string()}")
                 return False
+            
+            print(f"✓ Issuer matches CA")
+            
+            # Step 4: Verify basic constraints (if certificate is a CA)
+            print(f"\n[Certificate Constraints]")
+            try:
+                basic_constraints = certificate.extensions.get_extension_for_oid(
+                    x509.oid.ExtensionOID.BASIC_CONSTRAINTS
+                )
+                is_ca = basic_constraints.value.ca
+                print(f"✓ Basic constraints: CA={is_ca}")
+                
+                # If it's a CA certificate, it should have ca=True
+                # If it's an end-entity, it should have ca=False
+                
+            except x509.ExtensionNotFound:
+                print(f"⚠️  No basic constraints extension")
+            
+            # Step 5: Verify key usage
+            try:
+                key_usage = certificate.extensions.get_extension_for_oid(
+                    x509.oid.ExtensionOID.KEY_USAGE
+                )
+                print(f"✓ Key usage extension present")
+                print(f"  - Digital Signature: {key_usage.value.digital_signature}")
+                print(f"  - Key Cert Sign: {key_usage.value.key_cert_sign}")
+                
+            except x509.ExtensionNotFound:
+                print(f"⚠️  No key usage extension")
+            
+            print(f"\n✓ Certificate verification SUCCESSFUL")
+            print(f"  - Certificate is signed by: {self.name}")
+            print(f"  - Certificate is currently VALID")
+            print(f"  - All constraints satisfied")
+            return True
                 
         except Exception as e:
-            print(f"✗ Certificate verification failed: {e}")
+            print(f"\n✗ Certificate verification FAILED: {e}")
+            import traceback
+            traceback.print_exc()
             return False

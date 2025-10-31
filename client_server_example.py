@@ -127,7 +127,8 @@ class Server:
                 is_valid = verifier.verify_signature(
                     message,
                     signature,
-                    document_name=f"message_from_{sender}"
+                    document_name=f"message_from_{sender}",
+                    signer_certificate=client_cert  # Pass certificate for full PKI validation
                 )
                 
                 if is_valid:
